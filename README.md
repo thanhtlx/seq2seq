@@ -8,7 +8,7 @@ pip install -r requirement.txt
 
 ## Download dataset
 
-1. Download [here](`https://www.kaggle.com/datasets/ducanger/cmg-data`) to folder data
+1. Download [here](https://www.kaggle.com/datasets/ducanger/cmg-data) to folder data
 2. Run `python split_data.py`
 
 ## Run
@@ -16,3 +16,5 @@ pip install -r requirement.txt
 ```bash
 sh run.sh
 ```
+## Eval
+eval.ipynb
