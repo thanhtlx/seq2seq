@@ -21,9 +21,16 @@ using a masked language modeling (MLM) loss.
 
 from __future__ import absolute_import
 import re
+from gensim.models import Word2Vec
+import glob
 from config import *
+from embedding.Word2VecTrain import Word2VecTrain
+import nltk
+from nltk.tokenize import word_tokenize, wordpunct_tokenize
 import os
+import sys
 import bleu
+import pickle
 import torch
 import json
 import random
@@ -33,7 +40,7 @@ import numpy as np
 from io import open
 from itertools import cycle
 import torch.nn as nn
-from model_transformer import Seq2Seq, Encoder
+from model import Seq2Seq, Encoder
 from tqdm import tqdm, trange
 from torch.utils.data import DataLoader, Dataset, SequentialSampler, RandomSampler, TensorDataset
 from torch.utils.data.distributed import DistributedSampler
@@ -63,11 +70,6 @@ class Example(object):
 def read_examples(filename):
     """Read examples from filename."""
     examples = []
-    with open('data/variable_change.json') as f:
-        data = json.load(f)
-        mapping = dict()
-        for k,v in data.items():
-            mapping[k.replace('file_fc_patch.csv_','')] = v
     c = 0
     print('Read examples: ', filename)
     with open(filename, encoding="utf-8") as f:
@@ -83,14 +85,6 @@ def read_examples(filename):
             code = ' '.join(code.strip().split())
             nl = ' '.join(js['docstring_tokens']).replace('\n', '')
             nl = ' '.join(nl.strip().split())
-            if js['index'] in mapping:
-                for k,v in mapping[js['index']].items():
-                    # if idx <= 5:
-                    #     print('map',k,v)
-                    if len(k) > 2: 
-                        code = code.replace(k,v)
-                        nl = nl.replace(k,v)
-            
             examples.append(
                 Example(
                     idx=idx,
@@ -168,35 +162,53 @@ def preprocessing(string):
 
 
 def tokenize_string(strings, tokenizer, max_len=None):
-    # strings = preprocessing(strings)
+    # tokens = tokenizer.tokenize(strings)
+    # if max_len is not None:
+    #     tokens = tokens[:max_len-2]
+    # return [tokenizer.cls_token] + tokens+[tokenizer.sep_token]
+    # print(strings)
+    # print(strings)
+    strings = preprocessing(strings)
+    # print(strings)
+    # print("*"*33)
+    # tokens = wordpunct_tokenize(strings)
     tokens = tokenizer.tokenize(strings)
+    # print(tokens)
     if max_len is not None:
         tokens = tokens[:max_len-2]
-    return [tokenizer.cls_token] + tokens+[tokenizer.sep_token]
+    return [CLS_TOKEN] + tokens + [SEP_TOKEN]
 
 
-def convert_examples_to_features(examples, tokenizer, args, stage=None):
+def convert_examples_to_features(examples, embedding, tokenizer, args, stage=None):
     features = []
     print('conver example to feature')
-    source_sum = list()
-    target_sum = list()
     for example_index, example in tqdm(enumerate(examples)):
         source_tokens = tokenize_string(
             example.source, tokenizer, args.max_source_length)
-        source_sum.append(len(source_tokens))
-        source_ids = tokenizer.convert_tokens_to_ids(source_tokens)
+        # source_ids = tokenizer.convert_tokens_to_ids(source_tokens)
+        source_ids = [embedding.key_to_index[token] for token in source_tokens]
         source_mask = [1] * (len(source_tokens))
         padding_length = args.max_source_length - len(source_ids)
-        source_ids += [tokenizer.pad_token_id]*padding_length
+        source_ids += [embedding.key_to_index[PAD_TOKEN]]*padding_length
         source_mask += [0]*padding_length
         target_tokens = tokenize_string(
             example.target, tokenizer, args.max_target_length)
-        target_sum.append(len(target_tokens))
-        target_ids = tokenizer.convert_tokens_to_ids(target_tokens)
+        # target_ids = tokenizer.convert_tokens_to_ids(target_tokens)
+        target_ids = [embedding.key_to_index[token] for token in target_tokens]
+
         target_mask = [1] * len(target_ids)
         padding_length = args.max_target_length - len(target_ids)
-        target_ids += [tokenizer.pad_token_id]*padding_length
+        target_ids += [embedding.key_to_index[PAD_TOKEN]]*padding_length
         target_mask += [0]*padding_length
+
+        # source_embedding = np.zeros(
+        #     (args.max_source_length, args.hidden_size))
+        # tartget_embedding = np.zeros(
+        #     (args.max_target_length, args.hidden_size))
+        # source_embedding[:len(source_tokens)] = torch.tensor(
+        #     embedding[source_tokens])
+        # tartget_embedding[:len(target_tokens)] = torch.tensor(
+        #     embedding[target_tokens])
 
         if example_index < 0:
             if stage == 'train':
@@ -214,7 +226,10 @@ def convert_examples_to_features(examples, tokenizer, args, stage=None):
                     ' '.join(map(str, target_ids))))
                 logger.info("target_mask: {}".format(
                     ' '.join(map(str, target_mask))))
-        
+                # logger.info("source embedding: {}".format(
+                #     ' '.join(map(str, source_embedding))))
+                # logger.info("tartget_embedding: {}".format(
+                #     ' '.join(map(str, source_embedding))))
         features.append(
             InputFeatures(
                 example_index,
@@ -222,10 +237,10 @@ def convert_examples_to_features(examples, tokenizer, args, stage=None):
                 target_ids,
                 source_mask,
                 target_mask,
+                # source_embedding,
+                # tartget_embedding,
             )
         )
-    print('source: ',max(source_sum),min(source_sum), sum(source_sum)/len(source_sum))
-    print('target: ',max(target_sum),min(target_sum), sum(target_sum)/len(target_sum))
     return features
 
 
@@ -337,18 +352,24 @@ def main():
         args.config_name if args.config_name else args.model_name_or_path)
     tokenizer = tokenizer_class.from_pretrained(
         args.tokenizer_name if args.tokenizer_name else args.model_name_or_path, do_lower_case=args.do_lower_case)
-    encoder = Encoder(config)
+    # embedding = check_language_model(tokenizer, args.hidden_size)
+    print('vocab size: ', len(embedding.wv.key_to_index))
+    config.hidden_size = args.hidden_size
+    config.vocab_size = len(embedding.wv.key_to_index)
+    # build model
+    # encoder = model_class.from_pretrained(args.model_name_or_path,config=config)
+    encoder = Encoder(embedding.wv, tokenizer, args.hidden_size)
     print(config.num_attention_heads)
     decoder_layer = nn.TransformerDecoderLayer(
-        d_model=config.hidden_size, nhead=8)
+        d_model=args.hidden_size, nhead=8)
     decoder = nn.TransformerDecoder(decoder_layer, num_layers=6)
     model = Seq2Seq(encoder=encoder, decoder=decoder, config=config,
                     beam_size=args.beam_size, max_length=args.max_target_length,
-                     sos_id=tokenizer.cls_token_id,eos_id=tokenizer.sep_token_id)
+                    sos_id=embedding.wv.key_to_index[CLS_TOKEN], eos_id=embedding.wv.key_to_index[SEP_TOKEN])
     if args.load_model_path is not None:
         logger.info("reload model from {}".format(args.load_model_path))
         model.load_state_dict(torch.load(args.load_model_path))
-    print(model)
+
     model.to(device)
     if args.local_rank != -1:
         # Distributed training
@@ -367,7 +388,7 @@ def main():
         # Prepare training data loader
         train_examples = read_examples(args.train_filename)
         train_features = convert_examples_to_features(
-            train_examples, tokenizer, args, stage='train')
+            train_examples, embedding.wv, tokenizer, args, stage='train')
         all_source_ids = torch.tensor(
             [f.source_ids for f in train_features], dtype=torch.long)
         all_source_mask = torch.tensor(
@@ -376,8 +397,13 @@ def main():
             [f.target_ids for f in train_features], dtype=torch.long)
         all_target_mask = torch.tensor(
             [f.target_mask for f in train_features], dtype=torch.long)
+        # [print(f.source_embedding.shape) for f in train_features]
+        # all_source_embedding = torch.tensor(
+        #     [f.source_embedding for f in train_features], dtype=torch.float)
+        # all_target_embedding = torch.tensor(
+        #     [f.target_embedding for f in train_features], dtype=torch.float)
         train_data = TensorDataset(
-            all_source_ids, all_source_mask, all_target_ids, all_target_mask)
+            all_source_ids, all_source_mask, all_target_ids, all_target_mask)  # , all_source_embedding, all_target_embedding)
 
         if args.local_rank == -1:
             train_sampler = RandomSampler(train_data)
@@ -414,15 +440,14 @@ def main():
                    total=num_train_optimization_steps)
         train_dataloader = cycle(train_dataloader)
         eval_flag = True
-        early_stop = 0
         for step in bar:
-            if early_stop > EARLY_STOP_LEVEL:
-                break
             batch = next(train_dataloader)
             batch = tuple(t.to(device) for t in batch)
             source_ids, source_mask, target_ids, target_mask = batch
+            # source_ids, source_mask, target_ids, target_mask, source_embedding, target_embedding = batch
             loss, _, _ = model(source_ids=source_ids, source_mask=source_mask,
                                target_ids=target_ids, target_mask=target_mask,)
+            #    source_embedding=source_embedding, target_embedding=target_embedding)
 
             if args.n_gpu > 1:
                 loss = loss.mean()  # mean() to average on multi-gpu.
@@ -454,7 +479,7 @@ def main():
                 else:
                     eval_examples = read_examples(args.dev_filename)
                     eval_features = convert_examples_to_features(
-                        eval_examples, tokenizer, args, stage='dev')
+                        eval_examples, embedding.wv, tokenizer, args, stage='dev')
                     all_source_ids = torch.tensor(
                         [f.source_ids for f in eval_features], dtype=torch.long)
                     all_source_mask = torch.tensor(
@@ -463,8 +488,12 @@ def main():
                         [f.target_ids for f in eval_features], dtype=torch.long)
                     all_target_mask = torch.tensor(
                         [f.target_mask for f in eval_features], dtype=torch.long)
+                    # all_source_embedding = torch.tensor(
+                    #     [f.source_embedding for f in eval_features], dtype=torch.float)
+                    # all_target_embedding = torch.tensor(
+                    #     [f.target_embedding for f in eval_features], dtype=torch.float)
                     eval_data = TensorDataset(
-                        all_source_ids, all_source_mask, all_target_ids, all_target_mask)  
+                        all_source_ids, all_source_mask, all_target_ids, all_target_mask)  # , all_source_embedding, all_target_embedding)
                     dev_dataset['dev_loss'] = eval_examples, eval_data
                 eval_sampler = SequentialSampler(eval_data)
                 eval_dataloader = DataLoader(
@@ -479,11 +508,13 @@ def main():
                 eval_loss, tokens_num = 0, 0
                 for batch in eval_dataloader:
                     batch = tuple(t.to(device) for t in batch)
+                    # source_ids, source_mask, target_ids, target_mask, source_embedding, target_embedding = batch
                     source_ids, source_mask, target_ids, target_mask = batch
 
                     with torch.no_grad():
                         _, loss, num = model(source_ids=source_ids, source_mask=source_mask,
                                              target_ids=target_ids, target_mask=target_mask,)
+                        #  source_embedding=source_embedding, target_embedding=target_embedding)
                     eval_loss += loss.sum().item()
                     tokens_num += num.sum().item()
                 # Pring loss of dev dataset
@@ -507,7 +538,6 @@ def main():
                     last_output_dir, "pytorch_model.bin")
                 torch.save(model_to_save.state_dict(), output_model_file)
                 if eval_loss < best_loss:
-                    early_stop = 0
                     logger.info("  Best ppl:%s", round(np.exp(eval_loss), 5))
                     logger.info("  "+"*"*20)
                     best_loss = eval_loss
@@ -521,9 +551,7 @@ def main():
                     output_model_file = os.path.join(
                         output_dir, "pytorch_model.bin")
                     torch.save(model_to_save.state_dict(), output_model_file)
-                else:
-                    print('early stop:',early_stop)
-                    early_stop += 1
+
                 # Calculate bleu
                 if 'dev_bleu' in dev_dataset:
                     eval_examples, eval_data = dev_dataset['dev_bleu']
@@ -532,13 +560,16 @@ def main():
                     eval_examples = random.sample(
                         eval_examples, min(1000, len(eval_examples)))
                     eval_features = convert_examples_to_features(
-                        eval_examples, tokenizer, args, stage='test')
+                        eval_examples, embedding.wv, tokenizer, args, stage='test')
                     all_source_ids = torch.tensor(
                         [f.source_ids for f in eval_features], dtype=torch.long)
                     all_source_mask = torch.tensor(
                         [f.source_mask for f in eval_features], dtype=torch.long)
+                    # all_source_embedding = torch.tensor(
+                    #     [f.source_embedding for f in eval_features], dtype=torch.float)
+
                     eval_data = TensorDataset(
-                        all_source_ids, all_source_mask)  
+                        all_source_ids, all_source_mask)  # , all_source_embedding)
                     dev_dataset['dev_bleu'] = eval_examples, eval_data
 
                 eval_sampler = SequentialSampler(eval_data)
@@ -549,16 +580,21 @@ def main():
                 p = []
                 for batch in eval_dataloader:
                     batch = tuple(t.to(device) for t in batch)
+                    # source_ids, source_mask, source_embedding = batch
                     source_ids, source_mask = batch
                     with torch.no_grad():
                         preds = model(source_ids=source_ids,
                                       source_mask=source_mask,)
-                        # print('preds', preds.shape, preds[0].shape, preds[0])
+                        #   source_embedding=source_embedding)
+                        print('preds', preds.shape, preds[0].shape, preds[0])
                         for pred in preds:
                             t = pred[0].cpu().numpy()
                             t = list(t)
-                            if 0 in t:
-                                t = t[:t.index(0)]
+                            # if 0 in t:
+                            #     t = t[:t.index(0)]
+                            text = [embedding.wv.index_to_key[index]
+                                    for index in t]
+                            print('text', text)
                             text = tokenizer.decode(
                                 t, clean_up_tokenization_spaces=False)
                             p.append(text)
@@ -589,7 +625,7 @@ def main():
                     output_model_file = os.path.join(
                         output_dir, "pytorch_model.bin")
                     torch.save(model_to_save.state_dict(), output_model_file)
-                
+
     if args.do_test:
         files = []
         if args.dev_filename is not None:
@@ -600,13 +636,13 @@ def main():
             logger.info("Test file: {}".format(file))
             eval_examples = read_examples(file)
             eval_features = convert_examples_to_features(
-                eval_examples, tokenizer, args, stage='test')
+                eval_examples, embedding.wv, tokenizer, args, stage='test')
             all_source_ids = torch.tensor(
                 [f.source_ids for f in eval_features], dtype=torch.long)
             all_source_mask = torch.tensor(
                 [f.source_mask for f in eval_features], dtype=torch.long)
             eval_data = TensorDataset(
-                all_source_ids, all_source_mask)
+                all_source_ids, all_source_mask)  # , all_source_embedding)
 
             # Calculate bleu
             eval_sampler = SequentialSampler(eval_data)
@@ -624,8 +660,10 @@ def main():
                     for pred in preds:
                         t = pred[0].cpu().numpy()
                         t = list(t)
-                        if 0 in t:
-                            t = t[:t.index(0)]
+                        # if 0 in t:
+                        #     t = t[:t.index(0)]
+                        text = [embedding.wv.index_to_key[index]
+                                for index in t]
                         text = tokenizer.decode(
                             t, clean_up_tokenization_spaces=False)
                         p.append(text)
@@ -644,5 +682,28 @@ def main():
             logger.info("  "+"*"*20)
 
 
+def check_language_model(tokenizer, hidden_size):
+    # hidden_size = 128
+    lmp = f'{LANGUAGE_MODEL_PATH}{hidden_size}'
+    if os.path.exists(lmp):
+        model = Word2Vec.load(lmp)
+        return model
+    vocabs = list()
+    vocabs.append([PAD_TOKEN])
+    for file in glob.glob('data/*.jsonl'):
+        for el in read_examples(file):
+            source_tokens = tokenize_string(el.source, tokenizer)
+            target_tokens = tokenize_string(el.target, tokenizer)
+            vocabs.append(source_tokens)
+            vocabs.append(target_tokens)
+    print(vocabs[5])
+    w2v = Word2VecTrain(vocabs, 128, lmp)
+    w2v.train_model()
+    with open('vocab.txt', 'w+') as f:
+        f.write('\n'.join(list(w2v.model.wv.key_to_index.keys())))
+    return w2v.model
+
+
 if __name__ == "__main__":
+    # check_language_model()
     main()

@@ -21,9 +21,12 @@ using a masked language modeling (MLM) loss.
 
 from __future__ import absolute_import
 import re
+import glob
 from config import *
 import os
+import sys
 import bleu
+import pickle
 import torch
 import json
 import random
@@ -63,11 +66,6 @@ class Example(object):
 def read_examples(filename):
     """Read examples from filename."""
     examples = []
-    with open('data/variable_change.json') as f:
-        data = json.load(f)
-        mapping = dict()
-        for k,v in data.items():
-            mapping[k.replace('file_fc_patch.csv_','')] = v
     c = 0
     print('Read examples: ', filename)
     with open(filename, encoding="utf-8") as f:
@@ -83,14 +81,6 @@ def read_examples(filename):
             code = ' '.join(code.strip().split())
             nl = ' '.join(js['docstring_tokens']).replace('\n', '')
             nl = ' '.join(nl.strip().split())
-            if js['index'] in mapping:
-                for k,v in mapping[js['index']].items():
-                    # if idx <= 5:
-                    #     print('map',k,v)
-                    if len(k) > 2: 
-                        code = code.replace(k,v)
-                        nl = nl.replace(k,v)
-            
             examples.append(
                 Example(
                     idx=idx,
@@ -414,10 +404,7 @@ def main():
                    total=num_train_optimization_steps)
         train_dataloader = cycle(train_dataloader)
         eval_flag = True
-        early_stop = 0
         for step in bar:
-            if early_stop > EARLY_STOP_LEVEL:
-                break
             batch = next(train_dataloader)
             batch = tuple(t.to(device) for t in batch)
             source_ids, source_mask, target_ids, target_mask = batch
@@ -507,7 +494,6 @@ def main():
                     last_output_dir, "pytorch_model.bin")
                 torch.save(model_to_save.state_dict(), output_model_file)
                 if eval_loss < best_loss:
-                    early_stop = 0
                     logger.info("  Best ppl:%s", round(np.exp(eval_loss), 5))
                     logger.info("  "+"*"*20)
                     best_loss = eval_loss
@@ -521,9 +507,7 @@ def main():
                     output_model_file = os.path.join(
                         output_dir, "pytorch_model.bin")
                     torch.save(model_to_save.state_dict(), output_model_file)
-                else:
-                    print('early stop:',early_stop)
-                    early_stop += 1
+
                 # Calculate bleu
                 if 'dev_bleu' in dev_dataset:
                     eval_examples, eval_data = dev_dataset['dev_bleu']
@@ -589,7 +573,7 @@ def main():
                     output_model_file = os.path.join(
                         output_dir, "pytorch_model.bin")
                     torch.save(model_to_save.state_dict(), output_model_file)
-                
+
     if args.do_test:
         files = []
         if args.dev_filename is not None:

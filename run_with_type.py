@@ -73,8 +73,6 @@ def read_examples(filename):
     with open(filename, encoding="utf-8") as f:
         for idx, line in tqdm(enumerate(f)):
             c += 1
-            if c > 30000:
-                break
             line = line.strip()
             js = json.loads(line)
             if 'idx' not in js:
@@ -90,6 +88,10 @@ def read_examples(filename):
                     if len(k) > 2: 
                         code = code.replace(k,v)
                         nl = nl.replace(k,v)
+            if js['type'] == 1:
+                code = "SECURITY " + code
+            else:
+                code = "NONSECURITY " + code
             
             examples.append(
                 Example(
