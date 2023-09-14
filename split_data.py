@@ -50,3 +50,32 @@ def dump_to_file(obj, file):
 dump_to_file(train,'data/train3.jsonl')
 dump_to_file(test,'data/test3.jsonl')
 dump_to_file(val,'data/valid3.jsonl')
+
+
+import pandas as pd 
+df = pd.read_csv('meta_patch_db.csv')
+df.head(1)
+type_dict = dict()
+for _,row in df.iterrows():
+    index= str(row['commit_id'])
+    index = index.lower()
+    type_dict[index] = 1 if row['category'] == 'security' else 0 
+
+import json
+result = list()
+# replace with train.valid set
+file = 'data/valid.jsonl'
+c = 0
+with open(file) as f:
+    for l in f.readlines():
+        data = json.loads(l.strip())
+        index = data['index'].split('_')[-1]
+        if index in type_dict.keys():
+            data['type'] = type_dict[index]
+            c += 1
+        else:
+            data['type'] = 1
+        result.append(json.dumps(data))
+with open(file,'w+') as f:
+    f.write('\n'.join(result))
+print(len(result),c)
