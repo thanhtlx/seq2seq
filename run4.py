@@ -383,7 +383,7 @@ def main():
             train_sampler = RandomSampler(train_data)
         else:
             train_sampler = DistributedSampler(train_data)
-        train_dataloader = DataLoader(train_data, sampler=train_sampler, num_workers=6,
+        train_dataloader = DataLoader(train_data, sampler=train_sampler, num_workers=8,
                                       batch_size=args.train_batch_size//args.gradient_accumulation_steps)
         num_train_optimization_steps = args.train_steps
 
@@ -468,7 +468,7 @@ def main():
                     dev_dataset['dev_loss'] = eval_examples, eval_data
                 eval_sampler = SequentialSampler(eval_data)
                 eval_dataloader = DataLoader(
-                    eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size, num_workers=6)
+                    eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size, num_workers=8)
 
                 logger.info("\n***** Running evaluation *****")
                 logger.info("  Num examples = %d", len(eval_examples))
@@ -543,7 +543,7 @@ def main():
 
                 eval_sampler = SequentialSampler(eval_data)
                 eval_dataloader = DataLoader(
-                    eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size, num_workers=6)
+                    eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size, num_workers=8)
 
                 model.eval()
                 p = []
@@ -611,7 +611,7 @@ def main():
             # Calculate bleu
             eval_sampler = SequentialSampler(eval_data)
             eval_dataloader = DataLoader(
-                eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size,  num_workers=6)
+                eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size,  num_workers=8)
 
             model.eval()
             p = []
