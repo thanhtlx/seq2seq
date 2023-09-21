@@ -183,10 +183,10 @@ def convert_examples_to_features(examples, tokenizer, args, stage=None):
             example.source, tokenizer, args.max_source_length)
         source_sum.append(len(source_tokens))
         source_ids = tokenizer.convert_tokens_to_ids(source_tokens)
-        source_mask = [1] * (len(source_tokens))
+        source_mask = [1] * (len(source_tokens)+1)
         padding_length = args.max_source_length - len(source_ids)
         source_ids += [tokenizer.pad_token_id]*padding_length
-        source_mask += [0]*(padding_length+1)
+        source_mask += [0]*(padding_length)
         target_tokens = tokenize_string(
             example.target, tokenizer, args.max_target_length)
         target_sum.append(len(target_tokens))

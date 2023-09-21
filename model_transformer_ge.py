@@ -24,7 +24,7 @@ class Encoder(nn.Module):
         ge = ge.reshape(ge.shape[0],1,ge.shape[-1])
         embedding = self.embeddings(ids)
         out= self.transformer_encoder(embedding)
-        out = torch.cat((out,ge),dim=1)
+        out = torch.cat((ge,embedding),dim=1)
         
         x = self.dropout(out)
         return x
