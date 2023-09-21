@@ -26,6 +26,7 @@ class Encoder(nn.Module):
         types = types.expand(types.shape[0],embedding.shape[1],1)
         embedding = torch.cat((embedding,types),dim=2)
         embedding =  self.lin(embedding)
+        print(embedding.shape)
         out= self.transformer_encoder(embedding)
         x = self.dropout(out)
         return x

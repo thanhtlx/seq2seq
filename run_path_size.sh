@@ -1,4 +1,4 @@
-python3 run_with_path_same_embedding.py --do_test --do_train --do_eval \
+python3 run_with_path_and_size.py --do_test --do_train --do_eval \
  --train_steps 30000 --eval_steps 2000 \
 --max_source_length 500 --max_target_length 30 \
 --train_batch_size 24 --eval_batch_size 300 \

@@ -1,4 +1,4 @@
-VERSION=FINETUNE_EARLY_STOP_LOSS_600_path_w2v_new_embedd_change
+VERSION=FINETUNE_EARLY_STOP_LOSS_TRAVESAL_PREODER
 mkdir -p output/versions/${VERSION}
 mkdir -p output/versions/${VERSION}/code
 cp output/test* output/versions/${VERSION}

@@ -8,7 +8,7 @@ from torch.autograd import Variable
 import copy
 import numpy as np
 import torch.nn.functional as F
-from gensim.models import KeyedVectors
+
 
 
 class Encoder(nn.Module):
@@ -16,13 +16,19 @@ class Encoder(nn.Module):
         super(Encoder, self).__init__()
         self.dropout = nn.Dropout(p=dropout)
         self.hidden_size = config.hidden_size
-        # self.embeddings = nn.Embedding(config.vocab_size, config.hidden_size)
+        self.embeddings = nn.Embedding(config.vocab_size, config.hidden_size)
         self.encoder_layer = nn.TransformerEncoderLayer(d_model=config.hidden_size, nhead=8)
         self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=6)
-
-    def forward(self, ids, attention_mask):
-        # embedding = self.embeddings(ids)
-        out= self.transformer_encoder(ids)
+        self.lin = nn.Linear(config.hidden_size+1,config.hidden_size)
+    def forward(self, ids, attention_mask,types,ge):
+        embedding = self.embeddings(ids)
+        embdding = torch.cat((embedding,ge),dim=1)
+        types = types.reshape((embedding.shape[0],1,1))
+        types = types.expand(types.shape[0],embedding.shape[1],1)
+        embedding = torch.cat((embedding,types),dim=2)
+        embedding =  self.lin(embedding)
+        # print(embedding.shape)
+        out= self.transformer_encoder(embedding)
         x = self.dropout(out)
         return x
 
@@ -42,25 +48,22 @@ class Seq2Seq(nn.Module):
         * `eos_id`- end of symbol ids in target for beam search. 
     """
 
-    def __init__(self, encoder, decoder, config, beam_size=None, max_length=None, sos_id=None, eos_id=None,tokenizer=None):
+    def __init__(self, encoder, decoder, config, beam_size=None, max_length=None, sos_id=None, eos_id=None):
         super(Seq2Seq, self).__init__()
         self.encoder = encoder
         self.decoder = decoder
         self.config = config
-        self.tokenizer = tokenizer
-        self.w2v = KeyedVectors.load("w2v600_lb", mmap='r')
         self.register_buffer("bias", torch.tril(torch.ones(2048, 2048)))
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.lm_head = nn.Linear(
             config.hidden_size, config.vocab_size, bias=False)
         self.lsm = nn.LogSoftmax(dim=-1)
-        # self.tie_weights()
+        self.tie_weights()
 
         self.beam_size = beam_size
         self.max_length = max_length
         self.sos_id = sos_id
         self.eos_id = eos_id
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     def _tie_or_clone_weights(self, first_module, second_module):
         """ Tie or clone module weights depending of whether we are using TorchScript or not
@@ -77,27 +80,15 @@ class Seq2Seq(nn.Module):
         self._tie_or_clone_weights(self.lm_head,
                                    self.encoder.embeddings)
 
-    def embeddings(self,ids):
-        embeddings = torch.zeros((ids.shape[0],ids.shape[1],256),device=self.device) 
-        for idx, id in enumerate(ids):
-            tokens = self.tokenizer.convert_ids_to_tokens(id)
-            for jdx,token in enumerate(tokens):
-                if token in self.w2v.key_to_index.keys():
-                    embeddings[idx][jdx] = torch.tensor(self.w2v[token],device=self.device)
-            # embeddings[idx] = self.w2v[id]
-        return embeddings
-
-    def forward(self, source_ids=None, source_mask=None, target_ids=None, target_mask=None, args=None):
+    def forward(self, source_ids=None, source_mask=None,types=None, target_ids=None, target_mask=None, args=None):
         # batchxlengh
-        outputs = self.encoder(source_ids, attention_mask=source_mask)
-        # print('output',outputs.shape,outputs[0].shape,outputs[0],'\n',outputs[0][0])
+        outputs = self.encoder(source_ids, attention_mask=source_mask,types=types)
         encoder_output = outputs.permute([1, 0, 2]).contiguous()
-        # print(encoder_output.shape)
-        # lengxbatchxhidden_size
+
         if target_ids is not None:
             attn_mask = -1e4 * \
                 (1-self.bias[:target_ids.shape[1], :target_ids.shape[1]])
-            tgt_embeddings = self.embeddings(target_ids)
+            tgt_embeddings = self.encoder.embeddings(target_ids)
             # print('tgt_embeddings',tgt_embeddings)
             tgt_embeddings = tgt_embeddings.permute([1, 0, 2]).contiguous()
             # print(tgt_embeddings.shape)
@@ -123,7 +114,7 @@ class Seq2Seq(nn.Module):
             # Predict
             preds = []
             zero = torch.cuda.LongTensor(1).fill_(0)
-            for i in range(source_ids.shape[0]):#batch
+            for i in range(source_ids.shape[0]):
                 context = encoder_output[:, i:i+1]
                 context_mask = source_mask[i:i+1, :]
                 beam = Beam(self.beam_size, self.sos_id, self.eos_id)
@@ -135,7 +126,7 @@ class Seq2Seq(nn.Module):
                         break
                     attn_mask = -1e4 * \
                         (1-self.bias[:input_ids.shape[1], :input_ids.shape[1]])
-                    tgt_embeddings = self.embeddings(
+                    tgt_embeddings = self.encoder.embeddings(
                         input_ids).permute([1, 0, 2]).contiguous()
                     out = self.decoder(tgt_embeddings, context, tgt_mask=attn_mask,
                                        memory_key_padding_mask=(1-context_mask).bool())

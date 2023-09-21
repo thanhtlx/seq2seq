@@ -33,7 +33,7 @@ import numpy as np
 from io import open
 from itertools import cycle
 import torch.nn as nn
-from model_transformer_path import Seq2Seq, Encoder
+from model_transformer_path_type import Seq2Seq, Encoder
 from tqdm import tqdm, trange
 from torch.utils.data import DataLoader, Dataset, SequentialSampler, RandomSampler, TensorDataset
 from torch.utils.data.distributed import DistributedSampler
@@ -54,10 +54,12 @@ class Example(object):
                  idx,
                  source,
                  target,
+                 type
                  ):
         self.idx = idx
         self.source = source
         self.target = target
+        self.type = type
 
 
 def read_examples(filename):
@@ -68,17 +70,15 @@ def read_examples(filename):
     with open(filename, encoding="utf-8") as f:
         for idx, line in tqdm(enumerate(f)):
             c += 1
-            # if c > 100:
-            #     break
+            if c > 100:
+                break
             line = line.strip()
             js = json.loads(line)
             if 'idx' not in js:
                 js['idx'] = idx
             index = js['index']
             # file = f'path/data/path_embedding2/{index}.pt'
-            file = f'data/path_embedding4/{index}.pt'
-            if not os.path.exists(file):
-                continue
+            file = f'data/path_embedding3/{index}.pt'
             embedding = torch.load(file)
             nl = ' '.join(js['docstring_tokens']).replace('\n', '')
             nl = ' '.join(nl.strip().split())
@@ -87,6 +87,7 @@ def read_examples(filename):
                     idx=idx,
                     source=embedding,
                     target=nl,
+                    type= js['type']
                 )
             )
     return examples
@@ -101,12 +102,14 @@ class InputFeatures(object):
                  target_ids,
                  source_mask,
                  target_mask,
+                 type
                  ):
         self.example_id = example_id
         self.source_ids = source_ids
         self.target_ids = target_ids
         self.source_mask = source_mask
         self.target_mask = target_mask
+        self.type = type
 
 
 specials = ['`', '|', '[', ']', '(', ')', ':', ',', '.', '*', ';', '->',
@@ -220,6 +223,7 @@ def convert_examples_to_features(examples, tokenizer, args, stage=None):
                 target_ids,
                 source_mask,
                 target_mask,
+                example.type,
             )
         )
     # print('source: ',max(source_sum),min(source_sum), sum(source_sum)/len(source_sum))
@@ -376,8 +380,11 @@ def main():
             [f.target_ids for f in train_features], dtype=torch.long)
         all_target_mask = torch.tensor(
             [f.target_mask for f in train_features], dtype=torch.long)
+        types = torch.tensor(
+            [f.type for f in train_features], dtype=torch.long)
+        
         train_data = TensorDataset(
-            all_source_ids, all_source_mask, all_target_ids, all_target_mask)
+            all_source_ids, all_source_mask, all_target_ids, all_target_mask,types)
 
         if args.local_rank == -1:
             train_sampler = RandomSampler(train_data)
@@ -420,9 +427,9 @@ def main():
                 break
             batch = next(train_dataloader)
             batch = tuple(t.to(device) for t in batch)
-            source_ids, source_mask, target_ids, target_mask = batch
+            source_ids, source_mask, target_ids, target_mask, type = batch
             loss, _, _ = model(source_ids=source_ids, source_mask=source_mask,
-                               target_ids=target_ids, target_mask=target_mask,)
+                               target_ids=target_ids, target_mask=target_mask,types=type)
 
             if args.n_gpu > 1:
                 loss = loss.mean()  # mean() to average on multi-gpu.
@@ -463,8 +470,10 @@ def main():
                         [f.target_ids for f in eval_features], dtype=torch.long)
                     all_target_mask = torch.tensor(
                         [f.target_mask for f in eval_features], dtype=torch.long)
+                    types = torch.tensor(
+                        [f.type for f in eval_features], dtype=torch.long)
                     eval_data = TensorDataset(
-                        all_source_ids, all_source_mask, all_target_ids, all_target_mask)  
+                        all_source_ids, all_source_mask, all_target_ids, all_target_mask,types)  
                     dev_dataset['dev_loss'] = eval_examples, eval_data
                 eval_sampler = SequentialSampler(eval_data)
                 eval_dataloader = DataLoader(
@@ -479,11 +488,11 @@ def main():
                 eval_loss, tokens_num = 0, 0
                 for batch in eval_dataloader:
                     batch = tuple(t.to(device) for t in batch)
-                    source_ids, source_mask, target_ids, target_mask = batch
+                    source_ids, source_mask, target_ids, target_mask, type = batch
 
                     with torch.no_grad():
                         _, loss, num = model(source_ids=source_ids, source_mask=source_mask,
-                                             target_ids=target_ids, target_mask=target_mask,)
+                                             target_ids=target_ids, target_mask=target_mask,types=type)
                     eval_loss += loss.sum().item()
                     tokens_num += num.sum().item()
                 # Pring loss of dev dataset
@@ -537,8 +546,10 @@ def main():
                         [f.source_ids.detach().numpy() for f in eval_features], dtype=torch.float)
                     all_source_mask = torch.tensor(
                         [f.source_mask for f in eval_features], dtype=torch.long)
+                    types = torch.tensor(
+                        [f.type for f in eval_features], dtype=torch.long)
                     eval_data = TensorDataset(
-                        all_source_ids, all_source_mask)  
+                        all_source_ids, all_source_mask, types)  
                     dev_dataset['dev_bleu'] = eval_examples, eval_data
 
                 eval_sampler = SequentialSampler(eval_data)
@@ -549,10 +560,10 @@ def main():
                 p = []
                 for batch in eval_dataloader:
                     batch = tuple(t.to(device) for t in batch)
-                    source_ids, source_mask = batch
+                    source_ids, source_mask, type = batch
                     with torch.no_grad():
                         preds = model(source_ids=source_ids,
-                                      source_mask=source_mask,)
+                                      source_mask=source_mask,types=type)
                         # print('preds', preds.shape, preds[0].shape, preds[0])
                         for pred in preds:
                             t = pred[0].cpu().numpy()
@@ -605,8 +616,10 @@ def main():
                 [f.source_ids.detach().numpy() for f in eval_features], dtype=torch.float)
             all_source_mask = torch.tensor(
                 [f.source_mask for f in eval_features], dtype=torch.long)
+            types = torch.tensor(
+                [f.type for f in eval_features], dtype=torch.long)
             eval_data = TensorDataset(
-                all_source_ids, all_source_mask)
+                all_source_ids, all_source_mask, types)
 
             # Calculate bleu
             eval_sampler = SequentialSampler(eval_data)
@@ -617,10 +630,10 @@ def main():
             p = []
             for batch in tqdm(eval_dataloader, total=len(eval_dataloader)):
                 batch = tuple(t.to(device) for t in batch)
-                source_ids, source_mask = batch
+                source_ids, source_mask,type = batch
                 with torch.no_grad():
                     preds = model(source_ids=source_ids,
-                                  source_mask=source_mask,)
+                                  source_mask=source_mask,types=type)
                     for pred in preds:
                         t = pred[0].cpu().numpy()
                         t = list(t)

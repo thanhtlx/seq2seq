@@ -33,7 +33,7 @@ import numpy as np
 from io import open
 from itertools import cycle
 import torch.nn as nn
-from model_transformer_path import Seq2Seq, Encoder
+from model_transformer_ge import Seq2Seq, Encoder
 from tqdm import tqdm, trange
 from torch.utils.data import DataLoader, Dataset, SequentialSampler, RandomSampler, TensorDataset
 from torch.utils.data.distributed import DistributedSampler
@@ -68,8 +68,8 @@ def read_examples(filename):
     with open(filename, encoding="utf-8") as f:
         for idx, line in tqdm(enumerate(f)):
             c += 1
-            # if c > 100:
-            #     break
+            if c > 100:
+                break
             line = line.strip()
             js = json.loads(line)
             if 'idx' not in js:
@@ -80,6 +80,7 @@ def read_examples(filename):
             if not os.path.exists(file):
                 continue
             embedding = torch.load(file)
+            embedding = embedding[0]
             nl = ' '.join(js['docstring_tokens']).replace('\n', '')
             nl = ' '.join(nl.strip().split())
             examples.append(
@@ -176,12 +177,12 @@ def convert_examples_to_features(examples, tokenizer, args, stage=None):
         #     example.source, tokenizer, args.max_source_length)
         # source_sum.append(len(source_tokens))
         source_ids = example.source
-        source_mask = []
-        for i in range(source_ids.shape[0]):
-            if torch.count_nonzero(source_ids[i]).item() == source_ids[i].shape[0]:
-                source_mask.append(1)
-            else:
-                source_mask.append(0)
+        source_mask = [1] *source_ids.shape[0]
+        # for i in range():
+        #     if torch.count_nonzero(source_ids[i]).item() == source_ids[i].shape[0]:
+        #         source_mask.append(1)
+        #     else:
+        #         source_mask.append(0)
         # source_mask = [1] * (len(source_tokens))
         # padding_length = args.max_source_length - len(source_ids)
         # source_ids += [tokenizer.pad_token_id]*padding_length

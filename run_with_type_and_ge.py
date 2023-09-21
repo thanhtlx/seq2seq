@@ -33,7 +33,7 @@ import numpy as np
 from io import open
 from itertools import cycle
 import torch.nn as nn
-from model_transformer_path import Seq2Seq, Encoder
+from model_transformer import Seq2Seq, Encoder
 from tqdm import tqdm, trange
 from torch.utils.data import DataLoader, Dataset, SequentialSampler, RandomSampler, TensorDataset
 from torch.utils.data.distributed import DistributedSampler
@@ -63,29 +63,40 @@ class Example(object):
 def read_examples(filename):
     """Read examples from filename."""
     examples = []
+    with open('data/variable_change.json') as f:
+        data = json.load(f)
+        mapping = dict()
+        for k,v in data.items():
+            mapping[k.replace('file_fc_patch.csv_','')] = v
     c = 0
     print('Read examples: ', filename)
     with open(filename, encoding="utf-8") as f:
         for idx, line in tqdm(enumerate(f)):
             c += 1
-            # if c > 100:
-            #     break
             line = line.strip()
             js = json.loads(line)
             if 'idx' not in js:
                 js['idx'] = idx
-            index = js['index']
-            # file = f'path/data/path_embedding2/{index}.pt'
-            file = f'data/path_embedding4/{index}.pt'
-            if not os.path.exists(file):
-                continue
-            embedding = torch.load(file)
+            code = ' '.join(js['code_tokens']).replace('\n', ' ')
+            code = ' '.join(code.strip().split())
             nl = ' '.join(js['docstring_tokens']).replace('\n', '')
             nl = ' '.join(nl.strip().split())
+            if js['index'] in mapping:
+                for k,v in mapping[js['index']].items():
+                    # if idx <= 5:
+                    #     print('map',k,v)
+                    if len(k) > 2: 
+                        code = code.replace(k,v)
+                        nl = nl.replace(k,v)
+            if js['type'] == 1:
+                code = "SECURITY " + code
+            else:
+                code = "NONSECURITY " + code
+            
             examples.append(
                 Example(
                     idx=idx,
-                    source=embedding,
+                    source=code,
                     target=nl,
                 )
             )
@@ -172,21 +183,14 @@ def convert_examples_to_features(examples, tokenizer, args, stage=None):
     source_sum = list()
     target_sum = list()
     for example_index, example in tqdm(enumerate(examples)):
-        # source_tokens = tokenize_string(
-        #     example.source, tokenizer, args.max_source_length)
-        # source_sum.append(len(source_tokens))
-        source_ids = example.source
-        source_mask = []
-        for i in range(source_ids.shape[0]):
-            if torch.count_nonzero(source_ids[i]).item() == source_ids[i].shape[0]:
-                source_mask.append(1)
-            else:
-                source_mask.append(0)
-        # source_mask = [1] * (len(source_tokens))
-        # padding_length = args.max_source_length - len(source_ids)
-        # source_ids += [tokenizer.pad_token_id]*padding_length
-        # source_mask += [0]*padding_length
-
+        source_tokens = tokenize_string(
+            example.source, tokenizer, args.max_source_length)
+        source_sum.append(len(source_tokens))
+        source_ids = tokenizer.convert_tokens_to_ids(source_tokens)
+        source_mask = [1] * (len(source_tokens))
+        padding_length = args.max_source_length - len(source_ids)
+        source_ids += [tokenizer.pad_token_id]*padding_length
+        source_mask += [0]*padding_length
         target_tokens = tokenize_string(
             example.target, tokenizer, args.max_target_length)
         target_sum.append(len(target_tokens))
@@ -196,14 +200,14 @@ def convert_examples_to_features(examples, tokenizer, args, stage=None):
         target_ids += [tokenizer.pad_token_id]*padding_length
         target_mask += [0]*padding_length
 
-        if example_index < 3:
+        if example_index < 0:
             if stage == 'train':
                 logger.info("*** Example ***")
                 logger.info("idx: {}".format(example.idx))
-                # logger.info("source_tokens: {}".format(
-                #     [x.replace('\u0120', '_') for x in source_tokens]))
-                # logger.info("source_ids: {}".format(
-                #     ' '.join(map(str, source_ids))))
+                logger.info("source_tokens: {}".format(
+                    [x.replace('\u0120', '_') for x in source_tokens]))
+                logger.info("source_ids: {}".format(
+                    ' '.join(map(str, source_ids))))
                 logger.info("source_mask: {}".format(
                     ' '.join(map(str, source_mask))))
                 logger.info("target_tokens: {}".format(
@@ -216,14 +220,14 @@ def convert_examples_to_features(examples, tokenizer, args, stage=None):
         features.append(
             InputFeatures(
                 example_index,
-                example.source,
+                source_ids,
                 target_ids,
                 source_mask,
                 target_mask,
             )
         )
-    # print('source: ',max(source_sum),min(source_sum), sum(source_sum)/len(source_sum))
-    # print('target: ',max(target_sum),min(target_sum), sum(target_sum)/len(target_sum))
+    print('source: ',max(source_sum),min(source_sum), sum(source_sum)/len(source_sum))
+    print('target: ',max(target_sum),min(target_sum), sum(target_sum)/len(target_sum))
     return features
 
 
@@ -333,8 +337,6 @@ def main():
     config_class, model_class, tokenizer_class = MODEL_CLASSES[args.model_type]
     config = config_class.from_pretrained(
         args.config_name if args.config_name else args.model_name_or_path)
-    config.hidden_size = 256
-    
     tokenizer = tokenizer_class.from_pretrained(
         args.tokenizer_name if args.tokenizer_name else args.model_name_or_path, do_lower_case=args.do_lower_case)
     encoder = Encoder(config)
@@ -369,7 +371,7 @@ def main():
         train_features = convert_examples_to_features(
             train_examples, tokenizer, args, stage='train')
         all_source_ids = torch.tensor(
-            [f.source_ids.detach().numpy() for f in train_features], dtype=torch.float)
+            [f.source_ids for f in train_features], dtype=torch.long)
         all_source_mask = torch.tensor(
             [f.source_mask for f in train_features], dtype=torch.long)
         all_target_ids = torch.tensor(
@@ -456,7 +458,7 @@ def main():
                     eval_features = convert_examples_to_features(
                         eval_examples, tokenizer, args, stage='dev')
                     all_source_ids = torch.tensor(
-                        [f.source_ids.detach().numpy() for f in eval_features], dtype=torch.float)
+                        [f.source_ids for f in eval_features], dtype=torch.long)
                     all_source_mask = torch.tensor(
                         [f.source_mask for f in eval_features], dtype=torch.long)
                     all_target_ids = torch.tensor(
@@ -534,7 +536,7 @@ def main():
                     eval_features = convert_examples_to_features(
                         eval_examples, tokenizer, args, stage='test')
                     all_source_ids = torch.tensor(
-                        [f.source_ids.detach().numpy() for f in eval_features], dtype=torch.float)
+                        [f.source_ids for f in eval_features], dtype=torch.long)
                     all_source_mask = torch.tensor(
                         [f.source_mask for f in eval_features], dtype=torch.long)
                     eval_data = TensorDataset(
@@ -602,7 +604,7 @@ def main():
             eval_features = convert_examples_to_features(
                 eval_examples, tokenizer, args, stage='test')
             all_source_ids = torch.tensor(
-                [f.source_ids.detach().numpy() for f in eval_features], dtype=torch.float)
+                [f.source_ids for f in eval_features], dtype=torch.long)
             all_source_mask = torch.tensor(
                 [f.source_mask for f in eval_features], dtype=torch.long)
             eval_data = TensorDataset(

@@ -33,7 +33,7 @@ import numpy as np
 from io import open
 from itertools import cycle
 import torch.nn as nn
-from model_transformer_path import Seq2Seq, Encoder
+from model_transformer_path_same_embedding import Seq2Seq, Encoder
 from tqdm import tqdm, trange
 from torch.utils.data import DataLoader, Dataset, SequentialSampler, RandomSampler, TensorDataset
 from torch.utils.data.distributed import DistributedSampler
@@ -342,7 +342,7 @@ def main():
     decoder = nn.TransformerDecoder(decoder_layer, num_layers=6)
     model = Seq2Seq(encoder=encoder, decoder=decoder, config=config,
                     beam_size=args.beam_size, max_length=args.max_target_length,
-                     sos_id=tokenizer.cls_token_id,eos_id=tokenizer.sep_token_id)
+                     sos_id=tokenizer.cls_token_id,eos_id=tokenizer.sep_token_id,tokenizer=tokenizer)
     if args.load_model_path is not None:
         logger.info("reload model from {}".format(args.load_model_path))
         model.load_state_dict(torch.load(args.load_model_path))
