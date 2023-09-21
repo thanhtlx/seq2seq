@@ -466,9 +466,9 @@ def main():
                     all_target_mask = torch.tensor(
                         [f.target_mask for f in eval_features], dtype=torch.long)
                     all_ge = torch.tensor(
-                    [f.ge for f in train_features], dtype=torch.float)
+                    [f.ge for f in eval_features], dtype=torch.float)
                     eval_data = TensorDataset(
-                        all_source_ids, all_source_mask, all_target_ids, all_target_mask,all_ge)  
+                        all_source_ids, all_source_mask, all_target_ids, all_target_mask, all_ge)  
                     dev_dataset['dev_loss'] = eval_examples, eval_data
                 eval_sampler = SequentialSampler(eval_data)
                 eval_dataloader = DataLoader(
@@ -542,7 +542,7 @@ def main():
                     all_source_mask = torch.tensor(
                         [f.source_mask for f in eval_features], dtype=torch.long)
                     all_ge = torch.tensor(
-                        [f.ge for f in train_features], dtype=torch.float)
+                        [f.ge for f in eval_features], dtype=torch.float)
                     eval_data = TensorDataset(
                         all_source_ids, all_source_mask,all_ge)  
                     dev_dataset['dev_bleu'] = eval_examples, eval_data
@@ -612,7 +612,7 @@ def main():
             all_source_mask = torch.tensor(
                 [f.source_mask for f in eval_features], dtype=torch.long)
             all_ge = torch.tensor(
-            [f.ge for f in train_features], dtype=torch.float)
+            [f.ge for f in eval_features], dtype=torch.float)
             eval_data = TensorDataset(
                 all_source_ids, all_source_mask,all_ge)
 
