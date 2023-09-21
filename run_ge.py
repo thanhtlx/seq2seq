@@ -73,8 +73,8 @@ def read_examples(filename):
     with open(filename, encoding="utf-8") as f:
         for idx, line in tqdm(enumerate(f)):
             c += 1
-            if c > 100:
-                break
+            # if c > 100:
+            #     break
             line = line.strip()
             js = json.loads(line)
             if 'idx' not in js:
@@ -186,7 +186,7 @@ def convert_examples_to_features(examples, tokenizer, args, stage=None):
         source_mask = [1] * (len(source_tokens))
         padding_length = args.max_source_length - len(source_ids)
         source_ids += [tokenizer.pad_token_id]*padding_length
-        source_mask += [0]*padding_length
+        source_mask += [0]*(padding_length+1)
         target_tokens = tokenize_string(
             example.target, tokenizer, args.max_target_length)
         target_sum.append(len(target_tokens))

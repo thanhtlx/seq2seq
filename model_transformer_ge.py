@@ -23,8 +23,9 @@ class Encoder(nn.Module):
     def forward(self, ids, attention_mask,ge):
         ge = ge.reshape(ge.shape[0],1,ge.shape[-1])
         embedding = self.embeddings(ids)
-        embdding = torch.cat((embedding,ge),dim=1)
         out= self.transformer_encoder(embedding)
+        out = torch.cat((out,ge),dim=1)
+        
         x = self.dropout(out)
         return x
 

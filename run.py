@@ -69,8 +69,8 @@ def read_examples(filename):
     with open(filename, encoding="utf-8") as f:
         for idx, line in tqdm(enumerate(f)):
             c += 1
-            if c > 100:
-                break
+            # if c > 100:
+            #     break
             line = line.strip()
             js = json.loads(line)
             if 'idx' not in js:
