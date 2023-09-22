@@ -330,6 +330,7 @@ def main():
         args.config_name if args.config_name else args.model_name_or_path)
     tokenizer = tokenizer_class.from_pretrained(
         args.tokenizer_name if args.tokenizer_name else args.model_name_or_path, do_lower_case=args.do_lower_case)
+    config.hidden_size = int(args.hidden_size)
     encoder = Encoder(config)
     print(config.num_attention_heads)
     decoder_layer = nn.TransformerDecoderLayer(
