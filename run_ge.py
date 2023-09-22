@@ -80,6 +80,8 @@ def read_examples(filename):
             if 'idx' not in js:
                 js['idx'] = idx
             tmp = df[df['type']==js['index']]
+            if len(tmp) <= 0:
+                continue
             ge = tmp.values[0][1:]
             code = ' '.join(js['code_tokens']).replace('\n', ' ')
             code = ' '.join(code.strip().split())
