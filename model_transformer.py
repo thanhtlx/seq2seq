@@ -74,7 +74,9 @@ class Seq2Seq(nn.Module):
         self._tie_or_clone_weights(self.lm_head,
                                    self.encoder.embeddings)
 
-    def forward(self, source_ids=None, source_mask=None, target_ids=None, target_mask=None, args=None):
+    def forward(self, source_ids=None, source_mask=None, target_ids=None,
+                target_mask=None, args=None,
+                relation_ids=None, relation_mask=None):
         # batchxlengh
         outputs = self.encoder(source_ids, attention_mask=source_mask)
         # print('output',outputs.shape,outputs[0].shape,outputs[0],'\n',outputs[0][0])
@@ -104,6 +106,24 @@ class Seq2Seq(nn.Module):
             loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1))[active_loss],
                             shift_labels.view(-1)[active_loss])
 
+            outputs = loss, loss*active_loss.sum(), active_loss.sum()
+            return outputs
+        elif relation_ids is not None:
+            attn_mask = -1e4 * \
+                (1-self.bias[:relation_ids.shape[1], :relation_ids.shape[1]])
+            tgt_embeddings = self.encoder.embeddings(relation_ids)
+            tgt_embeddings = tgt_embeddings.permute([1, 0, 2]).contiguous()
+            out = self.decoder(tgt_embeddings, encoder_output, tgt_mask=attn_mask,
+                               memory_key_padding_mask=(1-source_mask).bool())
+            hidden_states = torch.tanh(self.dense(
+                out)).permute([1, 0, 2]).contiguous()
+            lm_logits = self.lm_head(hidden_states)
+            active_loss = relation_mask[..., 1:].ne(0).view(-1) == 1
+            shift_logits = lm_logits[..., :-1, :].contiguous()
+            shift_labels = relation_ids[..., 1:].contiguous()
+            loss_fct = nn.CrossEntropyLoss(ignore_index=-1)
+            loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1))[active_loss],
+                            shift_labels.view(-1)[active_loss])
             outputs = loss, loss*active_loss.sum(), active_loss.sum()
             return outputs
         else:

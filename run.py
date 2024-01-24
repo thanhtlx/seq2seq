@@ -55,12 +55,16 @@ class Example(object):
 
     def __init__(self,
                  idx,
-                 source,
+                 source_des,
+                 source_exp,
                  target,
+                 rationale
                  ):
         self.idx = idx
-        self.source = source
+        self.source_des = source_des
+        self.source_exp = source_exp
         self.target = target
+        self.relation = rationale
 
 
 def read_examples(filename):
@@ -78,16 +82,22 @@ def read_examples(filename):
             js = json.loads(line)
             if 'idx' not in js:
                 js['idx'] = idx
-            code = ' '.join(js['code_tokens']).replace('\n', ' ')
-            code = ' '.join(code.strip().split())
-            nl = ' '.join(js['docstring_tokens']).replace('\n', '')
+            code1 = 'Describe: ' + js['input'].replace('\n', ' ')
+            code1 = ' '.join(code1.strip().split())
+            code2 = 'Explain: ' + js['input'].replace('\n', ' ')
+            code2 = ' '.join(code2.strip().split())
+            nl = js['label'].replace('\n', '')
             nl = ' '.join(nl.strip().split())
+            rationale = js['rationale'].replace('\n', '')
+            rationale = ' '.join(rationale.strip().split())
             
             examples.append(
                 Example(
                     idx=idx,
-                    source=code,
+                    source_des=code1,
+                    source_exp=code2,
                     target=nl,
+                    rationale=rationale
                 )
             )
     return examples
@@ -98,69 +108,30 @@ class InputFeatures(object):
 
     def __init__(self,
                  example_id,
-                 source_ids,
+                 source_des_ids,
+                 source_des_mask,
+                 source_exp_ids,
+                 source_exp_mask,
                  target_ids,
-                 source_mask,
                  target_mask,
+                 relation_ids, 
+                 relation_mask
                  ):
         self.example_id = example_id
-        self.source_ids = source_ids
+        self.source_des_ids = source_des_ids
+        self.source_des_mask = source_des_mask
+        
+        self.source_exp_ids = source_exp_ids
+        self.source_exp_mask = source_exp_mask
+        
         self.target_ids = target_ids
-        self.source_mask = source_mask
         self.target_mask = target_mask
+        self.relation_ids = relation_ids
+        self.relation_mask = relation_mask
 
-
-specials = ['`', '|', '[', ']', '(', ')', ':', ',', '.', '*', ';', '->',
-            '-', '"', "'", '+', '<', '>', '/', '\\', '=', '&', '#', '}', '{']
-
-
-def standard_word(phrase):
-    phrase = re.sub(r"won\'t", "will not", phrase)
-    phrase = re.sub(r"can\'t", "can not", phrase)
-    phrase = re.sub(r"won\’t", "will not", phrase)
-    phrase = re.sub(r"can\’t", "can not", phrase)
-
-    # general
-    phrase = re.sub(r"n\'t", " not", phrase)
-    phrase = re.sub(r"\'re", " are", phrase)
-    phrase = re.sub(r"\'s", " is", phrase)
-    phrase = re.sub(r"\'d", " would", phrase)
-    phrase = re.sub(r"\'ll", " will", phrase)
-    phrase = re.sub(r"\'t", " not", phrase)
-    phrase = re.sub(r"\'ve", " have", phrase)
-    phrase = re.sub(r"\'m", " am", phrase)
-
-    phrase = re.sub(r"n\’t", " not", phrase)
-    phrase = re.sub(r"\’re", " are", phrase)
-    phrase = re.sub(r"\’s", " is", phrase)
-    phrase = re.sub(r"\’d", " would", phrase)
-    phrase = re.sub(r"\’ll", " will", phrase)
-    phrase = re.sub(r"\’t", " not", phrase)
-    phrase = re.sub(r"\’ve", " have", phrase)
-    phrase = re.sub(r"\’m", " am", phrase)
-    return phrase
-
-
-def preprocessing(string):
-    string = standard_word(string)
-    string = string.lower()
-    string = re.sub('\S*@\S*\s?', ' email ', string)
-    string = re.sub('#[0-9]+', ' NUM ', string)
-    string = re.sub('cve[0-9\-]+', ' CVE ', string)
-    # string = re.sub('[0-9\-]+',' NUM ',string)
-    string = re.sub('\s[0-9\.]{2,}\s', ' NUM ', string)
-    string = re.sub('\s[0-9]+.[0-9.]{2,}', ' NUM ', string)
-    string = re.sub('^[0-9]+.[0-9.]{2,}', ' NUM ', string)
-    string = re.sub(r'http\S+', ' URL ', string)
-    for ep in specials:
-        string = string.replace(ep, f' {ep} ')
-    string = re.sub('\s[0-9]+\s', ' NUM ', string)
-    string = ' '.join(string.split())
-    return string
 
 
 def tokenize_string(strings, tokenizer, max_len=None):
-    # strings = preprocessing(strings)
     tokens = tokenizer.tokenize(strings)
     if max_len is not None:
         tokens = tokens[:max_len-2]
@@ -173,22 +144,37 @@ def convert_examples_to_features(examples, tokenizer, args, stage=None):
     source_sum = list()
     target_sum = list()
     for example_index, example in tqdm(enumerate(examples)):
-        source_tokens = tokenize_string(
-            example.source, tokenizer, args.max_source_length)
-        source_sum.append(len(source_tokens))
-        source_ids = tokenizer.convert_tokens_to_ids(source_tokens)
-        source_mask = [1] * (len(source_tokens))
-        padding_length = args.max_source_length - len(source_ids)
-        source_ids += [tokenizer.pad_token_id]*padding_length
-        source_mask += [0]*padding_length
+        source_des_tokens = tokenize_string(
+            example.source_des, tokenizer, args.max_source_length)
+        source_des_ids = tokenizer.convert_tokens_to_ids(source_des_tokens)
+        source_des_mask = [1] * (len(source_des_tokens))
+        padding_length = args.max_source_length - len(source_des_ids)
+        source_des_ids += [tokenizer.pad_token_id]*padding_length
+        source_des_mask += [0]*padding_length
+        
+        source_exp_tokens = tokenize_string(
+            example.source_exp, tokenizer, args.max_source_length)
+        source_exp_ids = tokenizer.convert_tokens_to_ids(source_exp_tokens)
+        source_exp_mask = [1] * (len(source_exp_tokens))
+        padding_length = args.max_source_length - len(source_exp_ids)
+        source_exp_ids += [tokenizer.pad_token_id]*padding_length
+        source_exp_mask += [0]*padding_length
+        
         target_tokens = tokenize_string(
             example.target, tokenizer, args.max_target_length)
-        target_sum.append(len(target_tokens))
         target_ids = tokenizer.convert_tokens_to_ids(target_tokens)
         target_mask = [1] * len(target_ids)
         padding_length = args.max_target_length - len(target_ids)
         target_ids += [tokenizer.pad_token_id]*padding_length
         target_mask += [0]*padding_length
+        relation_tokens = tokenize_string(
+            example.relation, tokenizer, args.max_relation_length)
+        
+        relation_ids = tokenizer.convert_tokens_to_ids(relation_tokens)
+        relation_mask = [1] * len(relation_ids)
+        padding_length = args.max_relation_length - len(relation_ids)
+        relation_ids += [tokenizer.pad_token_id]*padding_length
+        relation_mask += [0]*padding_length
 
         if example_index < 0:
             if stage == 'train':
@@ -210,14 +196,16 @@ def convert_examples_to_features(examples, tokenizer, args, stage=None):
         features.append(
             InputFeatures(
                 example_index,
-                source_ids,
+                source_des_ids,
+                source_des_mask,
+                source_exp_ids,
+                source_exp_mask,
                 target_ids,
-                source_mask,
                 target_mask,
+                relation_ids,
+                relation_mask
             )
         )
-    print('source: ',max(source_sum),min(source_sum), sum(source_sum)/len(source_sum))
-    print('target: ',max(target_sum),min(target_sum), sum(target_sum)/len(target_sum))
     return features
 
 
@@ -260,6 +248,7 @@ def main():
     parser.add_argument("--max_target_length", default=32, type=int,
                         help="The maximum total target sequence length after tokenization. Sequences longer "
                              "than this will be truncated, sequences shorter will be padded.")
+    parser.add_argument("--max_relation_length", default=5, type=int)
     parser.add_argument("--do_train", action='store_true',
                         help="Whether to run training.")
     parser.add_argument("--do_eval", action='store_true',
@@ -286,6 +275,7 @@ def main():
                         help="Epsilon for Adam optimizer.")
     parser.add_argument("--max_grad_norm", default=1.0, type=float,
                         help="Max gradient norm.")
+    parser.add_argument("--alpha", default=0.5, type=float,)
     parser.add_argument("--num_train_epochs", default=3.0, type=float,
                         help="Total number of training epochs to perform.")
     parser.add_argument("--max_steps", default=-1, type=int,
@@ -337,6 +327,8 @@ def main():
     model = Seq2Seq(encoder=encoder, decoder=decoder, config=config,
                     beam_size=args.beam_size, max_length=args.max_target_length,
                      sos_id=tokenizer.cls_token_id,eos_id=tokenizer.sep_token_id)
+    
+    
     if args.load_model_path is not None:
         logger.info("reload model from {}".format(args.load_model_path))
         model.load_state_dict(torch.load(args.load_model_path))
@@ -360,17 +352,31 @@ def main():
         train_examples = read_examples(args.train_filename)
         train_features = convert_examples_to_features(
             train_examples, tokenizer, args, stage='train')
-        all_source_ids = torch.tensor(
-            [f.source_ids for f in train_features], dtype=torch.long)
-        all_source_mask = torch.tensor(
-            [f.source_mask for f in train_features], dtype=torch.long)
+        all_source_des_ids = torch.tensor(
+            [f.source_des_ids for f in train_features], dtype=torch.long)
+        all_source_des_mask = torch.tensor(
+            [f.source_des_mask for f in train_features], dtype=torch.long)
+        
+        all_source_exp_ids = torch.tensor(
+            [f.source_exp_ids for f in train_features], dtype=torch.long)
+        all_source_exp_mask = torch.tensor(
+            [f.source_exp_mask for f in train_features], dtype=torch.long)
+        
         all_target_ids = torch.tensor(
             [f.target_ids for f in train_features], dtype=torch.long)
         all_target_mask = torch.tensor(
             [f.target_mask for f in train_features], dtype=torch.long)
+        
+        all_relation_ids = torch.tensor(
+            [f.relation_ids for f in train_features], dtype=torch.long)
+        all_relation_mask = torch.tensor(
+            [f.relation_mask for f in train_features], dtype=torch.long)
         train_data = TensorDataset(
-            all_source_ids, all_source_mask, all_target_ids, all_target_mask)
+            all_source_des_ids, all_source_des_mask,
+            all_source_exp_ids, all_source_exp_mask,
+            all_target_ids, all_target_mask,all_relation_ids,all_relation_mask)
 
+        
         if args.local_rank == -1:
             train_sampler = RandomSampler(train_data)
         else:
@@ -409,10 +415,15 @@ def main():
         for step in bar:
             batch = next(train_dataloader)
             batch = tuple(t.to(device) for t in batch)
-            source_ids, source_mask, target_ids, target_mask = batch
-            loss, _, _ = model(source_ids=source_ids, source_mask=source_mask,
-                               target_ids=target_ids, target_mask=target_mask,)
-
+            source_des_ids, source_des_mask,source_exp_ids, source_exp_mask, target_ids, target_mask,relation_ids,relation_mask = batch
+            loss1, _, _ = model(source_ids=source_des_ids, source_mask=source_des_mask,
+                               target_ids=target_ids, target_mask=target_mask
+                               )
+            loss2, _, _ = model(source_ids=source_exp_ids, source_mask=source_exp_mask,
+                               relation_ids=relation_ids, relation_mask=relation_mask
+                               )
+            print(loss1.item(),loss2.item())
+            loss = args.alpha * loss1  + (1-args.alpha) *loss2
             if args.n_gpu > 1:
                 loss = loss.mean()  # mean() to average on multi-gpu.
             if args.gradient_accumulation_steps > 1:
@@ -421,7 +432,7 @@ def main():
             train_loss = round(
                 tr_loss*args.gradient_accumulation_steps/(nb_tr_steps+1), 4)
             bar.set_description("loss {}".format(train_loss))
-            nb_tr_examples += source_ids.size(0)
+            nb_tr_examples += source_des_ids.size(0)
             nb_tr_steps += 1
             loss.backward()
 
@@ -444,16 +455,28 @@ def main():
                     eval_examples = read_examples(args.dev_filename)
                     eval_features = convert_examples_to_features(
                         eval_examples, tokenizer, args, stage='dev')
-                    all_source_ids = torch.tensor(
-                        [f.source_ids for f in eval_features], dtype=torch.long)
-                    all_source_mask = torch.tensor(
-                        [f.source_mask for f in eval_features], dtype=torch.long)
+                    all_source_des_ids = torch.tensor(
+                        [f.source_des_ids for f in eval_features], dtype=torch.long)
+                    all_source_des_mask = torch.tensor(
+                        [f.source_des_mask for f in eval_features], dtype=torch.long)
+                    all_source_exp_ids = torch.tensor(
+                        [f.source_exp_ids for f in eval_features], dtype=torch.long)
+                    all_source_exp_mask = torch.tensor(
+                        [f.source_exp_mask for f in eval_features], dtype=torch.long)
+                    
                     all_target_ids = torch.tensor(
                         [f.target_ids for f in eval_features], dtype=torch.long)
                     all_target_mask = torch.tensor(
                         [f.target_mask for f in eval_features], dtype=torch.long)
+                    all_relation_ids = torch.tensor(
+                        [f.relation_ids for f in eval_features], dtype=torch.long)
+                    all_relation_mask = torch.tensor(
+                        [f.relation_mask for f in eval_features], dtype=torch.long)
+                    
                     eval_data = TensorDataset(
-                        all_source_ids, all_source_mask, all_target_ids, all_target_mask)  
+                        all_source_des_ids, all_source_des_mask,
+                        all_source_exp_ids, all_source_exp_mask, all_target_ids, all_target_mask, all_relation_ids, all_relation_mask)  
+                    
                     dev_dataset['dev_loss'] = eval_examples, eval_data
                 eval_sampler = SequentialSampler(eval_data)
                 eval_dataloader = DataLoader(
@@ -468,11 +491,15 @@ def main():
                 eval_loss, tokens_num = 0, 0
                 for batch in eval_dataloader:
                     batch = tuple(t.to(device) for t in batch)
-                    source_ids, source_mask, target_ids, target_mask = batch
+                    source_des_ids, source_des_mask, source_exp_ids, source_exp_mask, target_ids, target_mask,relation_ids, relation_mask = batch
 
                     with torch.no_grad():
-                        _, loss, num = model(source_ids=source_ids, source_mask=source_mask,
+                        _, loss1, num = model(source_ids=source_des_ids, source_mask=source_des_mask,
                                              target_ids=target_ids, target_mask=target_mask,)
+                        _, loss2, num = model(source_ids=source_exp_ids, source_mask=source_exp_mask,
+                                             relation_ids=relation_ids, relation_mask=relation_mask,)
+                        loss = args.alpha * loss1 + (1-args.alpha) * loss2
+                    
                     eval_loss += loss.sum().item()
                     tokens_num += num.sum().item()
                 # Pring loss of dev dataset
@@ -519,12 +546,14 @@ def main():
                         eval_examples, min(1000, len(eval_examples)))
                     eval_features = convert_examples_to_features(
                         eval_examples, tokenizer, args, stage='test')
-                    all_source_ids = torch.tensor(
-                        [f.source_ids for f in eval_features], dtype=torch.long)
-                    all_source_mask = torch.tensor(
-                        [f.source_mask for f in eval_features], dtype=torch.long)
+                    all_source_des_ids = torch.tensor(
+                        [f.source_des_ids for f in eval_features], dtype=torch.long)
+                    all_source_des_mask = torch.tensor(
+                        [f.source_des_mask for f in eval_features], dtype=torch.long)
+                    
                     eval_data = TensorDataset(
-                        all_source_ids, all_source_mask)  
+                        all_source_des_ids, all_source_des_mask,
+                        )  
                     dev_dataset['dev_bleu'] = eval_examples, eval_data
 
                 eval_sampler = SequentialSampler(eval_data)
@@ -587,12 +616,12 @@ def main():
             eval_examples = read_examples(file)
             eval_features = convert_examples_to_features(
                 eval_examples, tokenizer, args, stage='test')
-            all_source_ids = torch.tensor(
-                [f.source_ids for f in eval_features], dtype=torch.long)
-            all_source_mask = torch.tensor(
-                [f.source_mask for f in eval_features], dtype=torch.long)
+            all_source_des_ids = torch.tensor(
+                [f.source_des_ids for f in eval_features], dtype=torch.long)
+            all_source_des_mask = torch.tensor(
+                [f.source_des_mask for f in eval_features], dtype=torch.long)
             eval_data = TensorDataset(
-                all_source_ids, all_source_mask)
+                all_source_des_ids, all_source_des_mask)
 
             # Calculate bleu
             eval_sampler = SequentialSampler(eval_data)
